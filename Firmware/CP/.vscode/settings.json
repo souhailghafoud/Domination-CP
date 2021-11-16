@@ -1,0 +1,21 @@
+{
+  "C_Cpp.intelliSenseEngine": "Tag Parser",
+  "files.associations": {
+    "esp_bt_main.h": "c",
+    "chrono": "c",
+    "freertos.h": "c",
+    "math.h": "c",
+    "iterator": "c",
+    "cmath": "c",
+    "complex": "c",
+    "nvs_flash.h": "c",
+    "esp_gap_ble_api.h": "c",
+    "random": "c",
+    "*.ipp": "c",
+    "algorithm": "c",
+    "*.inc": "c",
+    "thread": "c"
+  },
+  "idf.portWin": "COM13",
+  "idf.flashType": "UART"
+}
