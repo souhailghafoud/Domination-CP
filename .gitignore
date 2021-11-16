@@ -348,3 +348,8 @@ MigrationBackup/
 
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
+
+# Remove sdkconfig files
+build/
+sdkconfig
+sdkconfig.old
