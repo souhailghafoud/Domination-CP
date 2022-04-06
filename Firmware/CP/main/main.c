@@ -1,6 +1,6 @@
 /*******************************************************************************************************
 **
-** @brief     XstractiK Domination Project -- XCPv0.1.0 Firmware (Milstone 1)
+** @brief     XstractiK Domination Project  -  Central-v0.1.0 Firmware (Milstone 1)
 **
 ** @copyright Copyright © 2021 GHS. All rights reserved.
 ** 
@@ -51,6 +51,9 @@
 /* LOG */
 #include "esp_log.h"
 
+/* LoRa */
+#include "lora.h"
+
 
 
 /********************************************* Constants **********************************************/
@@ -64,9 +67,9 @@
 #define LIMIT_SWITCH_TASK_PRIORITY  (tskIDLE_PRIORITY + 3)      // Priority level
 #define LIMIT_SWITCH_TASK_CORE      APP_CORE                    // CPU core ID
 
-#define TASK_STACK                  (1024 * 3)                  // Stack size in bytes
-#define TASK_PRIORITY               (tskIDLE_PRIORITY + 1)      // Priority level
-#define TASK_CORE                   APP_CORE                    // CPU core ID
+#define BEACON_PARSER_TASK_STACK    (1024 * 3)                  // Stack size in bytes
+#define BEACON_PARSER_TASK_PRIORITY (tskIDLE_PRIORITY + 1)      // Priority level
+#define BEACON_PARSER_TASK_CORE     APP_CORE                    // CPU core ID
 
 #define FLAG_CTRL_TASK_STACK        (1024 * 3)                  // Stack size in bytes
 #define FLAG_CTRL_TASK_PRIORITY     (tskIDLE_PRIORITY + 2)      // Priority level
@@ -80,7 +83,7 @@
 #define MAX_BEACONS                 10
 #define MAX_RSSI_COUNT              10
 #define RSSI_RADIUS                 -65                         // dBm
-#define BEACON_QUEUE_LEN            20                          // Beacon devives Queue length
+#define BEACON_QUEUE_LEN            MAX_BEACONS                 // Beacon devives Queue length
 
 #define HIGH			            1
 #define LOW 			            0
@@ -88,21 +91,23 @@
 /* SPI pins */
 #define PIN_SPI_MOSI                GPIO_NUM_23
 #define PIN_SPI_MISO                GPIO_NUM_19
-#define PIN_SPI_SCK                 GPIO_NUM_18
-#define PIN_SPI_SS                  GPIO_NUM_5
+#define PIN_SPI_CLK                 GPIO_NUM_18
+
 /* LoRa pins */
 #define PIN_LORA_DIO0               GPIO_NUM_27
 #define PIN_LORA_RESET              GPIO_NUM_14
+
 /* Limit switches pins */
 #define PIN_LIMIT_SWITCH_1          GPIO_NUM_4
 #define PIN_LIMIT_SWITCH_2          GPIO_NUM_2
 #define PIN_LIMIT_SWITCH_3          GPIO_NUM_15
+
 /* Stepper motor pins */
 #define PIN_MOTOR_DIR               GPIO_NUM_32
 #define PIN_MOTOR_STEP              GPIO_NUM_33
 #define PIN_MOTOR_RESET             GPIO_NUM_25
 
-/* Stepper motor directions (Clockwise - Conterclockwise) */
+/* Stepper motor directions (Clockwise & Conterclockwise) */
 #define MOTOR_DIR_CW			    HIGH
 #define MOTOR_DIR_CCW 			    LOW
 
@@ -234,8 +239,8 @@ static uint8_t raw_adv_data[20] = {
     0x02, 0x0a, 0xeb,
     /* Len:3, Type:3 (Complete List of 16-bit Service Class UUIDs), Data: FF 00 */
     0x03, 0x03, 0xFF, 0xF1,
-    /* Len:7, Type:9 (Complete Local Name) */
-    0x07, 0x09, 'X', 'C', 'P', '-', '0', '1'
+    /* Len:5, Type:9 (Complete Local Name) */
+    0x05, 0x09, 'C', '-', '0', '1'
 };
 
 
@@ -247,6 +252,8 @@ static stepper_freq_t stepper_freq[6] = {
     STEPPER_FREQ_50HZ,
     STEPPER_FREQ_60HZ
 };
+
+
 
 /*********************************************** ISRs *************************************************/
 
@@ -388,7 +395,6 @@ void delay_ms(uint32_t period_ms)
 }
 
 
-
 /*!
  * @brief This public function is used to initialize the stepper motor.
  *
@@ -399,11 +405,9 @@ void delay_ms(uint32_t period_ms)
 void stepper_init(void)
 {
     gpio_set_direction(PIN_MOTOR_DIR, GPIO_MODE_OUTPUT);
-    gpio_set_direction(PIN_MOTOR_SLEEP, GPIO_MODE_OUTPUT);
     gpio_set_direction(PIN_MOTOR_RESET, GPIO_MODE_OUTPUT);
     
     gpio_set_level(PIN_MOTOR_DIR, HIGH);
-    gpio_set_level(PIN_MOTOR_SLEEP, HIGH);
     gpio_set_level(PIN_MOTOR_RESET, HIGH);
 
     /* mcpwm gpio initialization */
@@ -423,7 +427,6 @@ void stepper_init(void)
     /* Stop PWM signal */
     mcpwm_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);
 }
-
 
 
 /*!
@@ -466,7 +469,7 @@ void team_info_update(team_info_t *team_dest, team_info_t team_source)
  * 
  * @return Nothing.
  */
-static void task(void *arg)
+static void beacon_parser_task(void *arg)
 {
     esp_bd_addr_t beacon_addr_list[MAX_BEACONS] = {{0x24, 0x0A, 0xC4, 0xFA, 0x4A, 0xCA},
                                                    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
@@ -752,7 +755,7 @@ static void limit_switch_task(void *arg)
  */
 void app_main(void)
 {
-    printf("\n\nXstractiK Domination Project -- XCPv%s\n\n", FIRMWARE_VERSION);
+    printf("\n\nXstractiK Domination Project  -  Central-v%s\n\n", FIRMWARE_VERSION);
 
     /* Create a task for limit switches */
     xTaskCreatePinnedToCore(&limit_switch_task,
@@ -784,13 +787,13 @@ void app_main(void)
     esp_bluedroid_enable();
     
     /* Create a task for.. */
-    xTaskCreatePinnedToCore(&task,
-                            "Task",
-                            TASK_STACK,
+    xTaskCreatePinnedToCore(&beacon_parser_task,
+                            "Beacon parser task",
+                            BEACON_PARSER_TASK_STACK,
                             NULL,
-                            TASK_PRIORITY,
+                            BEACON_PARSER_TASK_PRIORITY,
                             NULL,
-                            TASK_CORE);
+                            BEACON_PARSER_TASK_CORE);
     
     esp_err_t status;
 
