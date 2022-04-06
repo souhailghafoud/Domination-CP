@@ -38,7 +38,8 @@
     "esp_timer.h": "c",
     "cstddef": "c",
     "lora.h": "c",
-    "task.h": "c"
+    "task.h": "c",
+    "sstream": "c"
   },
   "idf.portWin": "COM6",
   "idf.flashType": "UART",

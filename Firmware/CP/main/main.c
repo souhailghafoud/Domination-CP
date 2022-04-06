@@ -1,6 +1,6 @@
 /*******************************************************************************************************
 **
-** @brief     XstractiK Domination Project  -  Central-v0.1.0 Firmware (Milstone 1)
+** @brief     XstractiK Domination Project  -  CP-v0.1.0 Firmware
 **
 ** @copyright Copyright © 2021 GHS. All rights reserved.
 ** 
@@ -71,9 +71,9 @@
 #define BEACON_PARSER_TASK_PRIORITY (tskIDLE_PRIORITY + 1)      // Priority level
 #define BEACON_PARSER_TASK_CORE     APP_CORE                    // CPU core ID
 
-#define FLAG_CTRL_TASK_STACK        (1024 * 3)                  // Stack size in bytes
-#define FLAG_CTRL_TASK_PRIORITY     (tskIDLE_PRIORITY + 2)      // Priority level
-#define FLAG_CTRL_TASK_CORE         APP_CORE                    // CPU core ID
+#define CP_CTRL_TASK_STACK          (1024 * 3)                  // Stack size in bytes
+#define CP_CTRL_TASK_PRIORITY       (tskIDLE_PRIORITY + 2)      // Priority level
+#define CP_CTRL_TASK_CORE           APP_CORE                    // CPU core ID
 
 #define MAX_TEAMS                   2
 #define MAX_UNITS                   5
@@ -84,6 +84,8 @@
 #define MAX_RSSI_COUNT              10
 #define RSSI_RADIUS                 -65                         // dBm
 #define BEACON_QUEUE_LEN            MAX_BEACONS                 // Beacon devives Queue length
+
+#define LORA_PACKET_LEN            32
 
 #define HIGH			            1
 #define LOW 			            0
@@ -156,18 +158,37 @@ typedef enum {
 
 
 /*!
- * @brief Team units.
+ * @brief Flag positons.
  */
 typedef enum {
     POSITION_A = 0,
     POSITION_B,
     POSITION_NONE,
-    POSITION_START,
+    POSITION_START
 } flag_position_t;
 
 
 /*!
- * @brief Stepper motor step frequency in Hz.
+ * @brief CP id.
+ */
+typedef enum {
+    CP_A = 0,
+    CP_B,
+    CP_C
+} cp_id_t;
+
+
+/*!
+ * @brief CP status.
+ */
+typedef enum {
+    CP_CAPTURED = 0,
+    CP_CAPTURING
+} cp_status_t;
+
+
+/*!
+ * @brief Stepper motor frequency in Hz.
  */
 typedef enum {
     STEPPER_FREQ_00HZ = 0,
@@ -586,15 +607,23 @@ static void beacon_parser_task(void *arg)
  * 
  * @return Nothing.
  */
-static void flag_ctrl_task(void *arg)
+static void cp_ctrl_task(void *arg)
 {
+    team_id_t current_team_id;
+    team_id_t opposing_team_id;
     team_info_t team[MAX_TEAMS] = {0};
     team_info_t team_temp = {0};
     flag_position_t flag_pos = POSITION_START;
+    char lora_packet[LORA_PACKET_LEN] = {0};
 
+    lora_init();
+    lora_set_frequency(915e6);
+    lora_enable_crc();
+    
     stepper_init();
 
     /* Put flag to starting position (Quick rotation) */
+    // TODO
 
     /* Create Team info queue */
     s_team_info_queue = xQueueCreate(TEAM_INFO_QUEUE_LEN, sizeof(team_info_t));
@@ -607,15 +636,19 @@ static void flag_ctrl_task(void *arg)
         team_info_update(team, team_temp);
         
         /* Store Team ids */
-        team_id_t current_team_id = team_temp.id;
-        team_id_t opposing_team_id = !team_temp.id;
+        current_team_id = team_temp.id;
+        opposing_team_id = !team_temp.id;
 
         if (true == team_temp.b_cp_captured && 0 == team[opposing_team_id].units_counter) {
             /* The current team has captured the CP (Save CP capture status) */
             team[current_team_id].b_cp_captured = team_temp.b_cp_captured;
             team[opposing_team_id].b_cp_captured = !team_temp.b_cp_captured;
+            
             /* Save new flag position */
             flag_pos = (current_team_id == TEAM_A ? POSITION_A : POSITION_B);
+
+            sprintf(lora_packet, "cp_id:%d, cp_status:%d, dominant_team:%d", CP_A, CP_CAPTURED, current_team_id);
+            lora_send_packet((uint8_t *)lora_packet, sizeof(lora_packet));
         }
         else {
             /* Before raising current team flag, make sure :
@@ -625,7 +658,7 @@ static void flag_ctrl_task(void *arg)
              * */
             if (0 < team[current_team_id].units_counter &&
                 0 == team[opposing_team_id].units_counter &&
-                (flag_position_t) current_team_id != flag_pos) {
+                (flag_position_t)current_team_id != flag_pos) {
                 
                 /* Raise flag */
                 gpio_set_level(PIN_MOTOR_DIR,
@@ -633,10 +666,15 @@ static void flag_ctrl_task(void *arg)
                 mcpwm_set_frequency(MCPWM_UNIT_0, MCPWM_TIMER_0,
                                     stepper_freq[team[current_team_id].capture_speed]);
                 mcpwm_start(MCPWM_UNIT_0, MCPWM_TIMER_0);
+
                 /* The opposing team is loosing the CP (Save CP new capture status) */
                 team[opposing_team_id].b_cp_captured = false;
+
                 /* Save new flag position (in motion so NONE)*/
                 flag_pos = POSITION_NONE;
+
+                sprintf(lora_packet, "cp_id:%d, cp_status:%d, dominant_team:%d", CP_A, CP_CAPTURING, current_team_id);
+                lora_send_packet((uint8_t *)lora_packet, sizeof(lora_packet));
             }
             else {
                 /* Resume opposing team flag rotation if :
@@ -646,17 +684,23 @@ static void flag_ctrl_task(void *arg)
                  * */
                 if (0 < team[opposing_team_id].units_counter &&
                     0 == team[current_team_id].units_counter &&
-                    (flag_position_t) opposing_team_id != flag_pos) {
+                    (flag_position_t)opposing_team_id != flag_pos) {
+
                     /* Raise flag */
                     gpio_set_level(PIN_MOTOR_DIR,
                                   (opposing_team_id == TEAM_B ? MOTOR_DIR_CCW : MOTOR_DIR_CW));
                     mcpwm_set_frequency(MCPWM_UNIT_0, MCPWM_TIMER_0,
                                         stepper_freq[team[opposing_team_id].capture_speed]);
                     mcpwm_start(MCPWM_UNIT_0, MCPWM_TIMER_0);
+
                     /* The current team is loosing the CP (Save CP new capture status) */
                     team[current_team_id].b_cp_captured = false;
+
                     /* Save new flag position (in motion so NONE)*/
                     flag_pos = POSITION_NONE;
+
+                    sprintf(lora_packet, "cp_id:%d, cp_status:%d, dominant_team:%d", CP_A, CP_CAPTURING, opposing_team_id);
+                    lora_send_packet((uint8_t *)lora_packet, sizeof(lora_packet));
                 }
                 else {
                     /* Stop flag rotation (Both team units are near the CP) */
@@ -755,7 +799,7 @@ static void limit_switch_task(void *arg)
  */
 void app_main(void)
 {
-    printf("\n\nXstractiK Domination Project  -  Central-v%s\n\n", FIRMWARE_VERSION);
+    printf("\n\nXstractiK Domination Project  -  CP-v%s\n\n", FIRMWARE_VERSION);
 
     /* Create a task for limit switches */
     xTaskCreatePinnedToCore(&limit_switch_task,
@@ -767,13 +811,13 @@ void app_main(void)
                             LIMIT_SWITCH_TASK_CORE);
 
     /* Create a task for flag control */
-    xTaskCreatePinnedToCore(&flag_ctrl_task,
-                            "Flag ctrl task",
-                            FLAG_CTRL_TASK_STACK,
+    xTaskCreatePinnedToCore(&cp_ctrl_task,
+                            "CP ctrl task",
+                            CP_CTRL_TASK_STACK,
                             NULL,
-                            FLAG_CTRL_TASK_PRIORITY,
+                            CP_CTRL_TASK_PRIORITY,
                             NULL,
-                            FLAG_CTRL_TASK_CORE);
+                            CP_CTRL_TASK_CORE);
 
     ESP_ERROR_CHECK(nvs_flash_init());
 
