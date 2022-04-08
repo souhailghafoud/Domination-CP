@@ -1,13 +1,13 @@
 /*******************************************************************************************************
 **
-** @brief     XstractiK Domination Project  -  CP-v0.1.0 Firmware
+** @brief     XstractiK Domination Project  -  CP-v0.2.0 Firmware
 **
 ** @copyright Copyright © 2021 GHS. All rights reserved.
 ** 
 ** @file	  main.cpp
 ** @author    Souhail Ghafoud
-** @date	  November 05, 2021
-** @version	  0.1.0
+** @date	  April 08, 2022
+** @version	  0.2.0
 **
 *******************************************************************************************************/
 
@@ -23,8 +23,10 @@
 #include <math.h>
 
 /* FreeRTOS */
+#include "freertos/FreeRTOSConfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "freertos/queue.h"
 
 /* GPIO */
@@ -58,74 +60,70 @@
 
 /********************************************* Constants **********************************************/
 
-#define FIRMWARE_VERSION            "0.1.0"                     // Firmware version
+#define FIRMWARE_VERSION                "0.2.0"                 // Firmware version
 
-#define PRO_CORE                    0                           // ESP32 Core 0
-#define APP_CORE                    1                           // ESP32 Core 1
+#define PRO_CORE                        0                       // ESP32 Core 0
+#define APP_CORE                        1                       // ESP32 Core 1
 
-#define LIMIT_SWITCH_TASK_STACK     (1024 * 3)                  // Stack size in bytes
-#define LIMIT_SWITCH_TASK_PRIORITY  (tskIDLE_PRIORITY + 3)      // Priority level
-#define LIMIT_SWITCH_TASK_CORE      APP_CORE                    // CPU core ID
+#define OPTICAL_SWITCH_TASK_STACK     (1024 * 3)                // Stack size in bytes
+#define OPTICAL_SWITCH_TASK_PRIORITY  (tskIDLE_PRIORITY + 3)    // Priority level
+#define OPTICAL_SWITCH_TASK_CORE      APP_CORE                  // CPU core ID
 
-#define BEACON_PARSER_TASK_STACK    (1024 * 3)                  // Stack size in bytes
-#define BEACON_PARSER_TASK_PRIORITY (tskIDLE_PRIORITY + 1)      // Priority level
-#define BEACON_PARSER_TASK_CORE     APP_CORE                    // CPU core ID
+#define BEACON_PARSER_TASK_STACK        (1024 * 3)              // Stack size in bytes
+#define BEACON_PARSER_TASK_PRIORITY     (tskIDLE_PRIORITY + 1)  // Priority level
+#define BEACON_PARSER_TASK_CORE         APP_CORE                // CPU core ID
 
-#define CP_CTRL_TASK_STACK          (1024 * 3)                  // Stack size in bytes
-#define CP_CTRL_TASK_PRIORITY       (tskIDLE_PRIORITY + 2)      // Priority level
-#define CP_CTRL_TASK_CORE           APP_CORE                    // CPU core ID
+#define CP_CTRL_TASK_STACK              (1024 * 3)              // Stack size in bytes
+#define CP_CTRL_TASK_PRIORITY           (tskIDLE_PRIORITY + 2)  // Priority level
+#define CP_CTRL_TASK_CORE               APP_CORE                // CPU core ID
 
-#define MAX_TEAMS                   2
-#define MAX_UNITS                   5
-#define MIN_UNITS                   0
-#define TEAM_INFO_QUEUE_LEN         5                           // Team info Queue length
+#define MAX_TEAMS                       2
+#define MAX_UNITS                       5
+#define MIN_UNITS                       0
+#define TEAM_INFO_QUEUE_LEN             5                       // Team info Queue length
 
-#define MAX_BEACONS                 10
-#define MAX_RSSI_COUNT              10
-#define RSSI_RADIUS                 -65                         // dBm
-#define BEACON_QUEUE_LEN            MAX_BEACONS                 // Beacon devives Queue length
+#define MAX_BEACONS                     10
+#define MAX_RSSI_COUNT                  10
+#define RSSI_RADIUS                     -65                     // dBm
+#define BEACON_QUEUE_LEN                MAX_BEACONS             // Beacon devives Queue length
 
-#define LORA_PACKET_LEN            32
+#define LORA_PACKET_LEN                 40
 
-#define HIGH			            1
-#define LOW 			            0
+#define CP_ID                           1
+
+#define SYS_INIT_EVENT_BIT              BIT0                    // System init EventBit
+
+#define MAX_CAPTURE_SPEED               6
+
+#define HIGH			                1
+#define LOW 			                0
 
 /* SPI pins */
-#define PIN_SPI_MOSI                GPIO_NUM_23
-#define PIN_SPI_MISO                GPIO_NUM_19
-#define PIN_SPI_CLK                 GPIO_NUM_18
+#define PIN_SPI_MOSI                    GPIO_NUM_23
+#define PIN_SPI_MISO                    GPIO_NUM_19
+#define PIN_SPI_CLK                     GPIO_NUM_18
 
 /* LoRa pins */
-#define PIN_LORA_DIO0               GPIO_NUM_27
-#define PIN_LORA_RESET              GPIO_NUM_14
+#define PIN_LORA_DIO0                   GPIO_NUM_27
+#define PIN_LORA_RESET                  GPIO_NUM_14
 
-/* Limit switches pins */
-#define PIN_LIMIT_SWITCH_1          GPIO_NUM_4
-#define PIN_LIMIT_SWITCH_2          GPIO_NUM_2
-#define PIN_LIMIT_SWITCH_3          GPIO_NUM_15
+/* Optical switch pins */
+#define PIN_OPTICAL_SWITCH_1            GPIO_NUM_26             // Flag position Team_A
+#define PIN_OPTICAL_SWITCH_2            GPIO_NUM_35             // Flag position Start
+#define PIN_OPTICAL_SWITCH_3            GPIO_NUM_15             // Flag position Team_B
 
 /* Stepper motor pins */
-#define PIN_MOTOR_DIR               GPIO_NUM_32
-#define PIN_MOTOR_STEP              GPIO_NUM_33
-#define PIN_MOTOR_RESET             GPIO_NUM_25
+#define PIN_MOTOR_DIR                   GPIO_NUM_32
+#define PIN_MOTOR_STEP                  GPIO_NUM_33
+#define PIN_MOTOR_RESET                 GPIO_NUM_25
 
 /* Stepper motor directions (Clockwise & Conterclockwise) */
-#define MOTOR_DIR_CW			    HIGH
-#define MOTOR_DIR_CCW 			    LOW
+#define MOTOR_DIR_CW			        HIGH
+#define MOTOR_DIR_CCW 			        LOW
 
 
 
 /************************************** Enumeration Definitions ***************************************/
-
-/*!
- * @brief LED colors.
- */
-typedef enum {
-    LED_OFF = 0,
-    LED_GREEN,
-    LED_RED
-} led_color_t;
-
 
 /*!
  * @brief Beacon proximity status.
@@ -166,16 +164,6 @@ typedef enum {
     POSITION_NONE,
     POSITION_START
 } flag_position_t;
-
-
-/*!
- * @brief CP id.
- */
-typedef enum {
-    CP_A = 0,
-    CP_B,
-    CP_C
-} cp_id_t;
 
 
 /*!
@@ -229,9 +217,11 @@ typedef struct {
 
 /***************************************** Static Variables *******************************************/
 
-static QueueHandle_t s_beacon_queue = NULL;             // Beacon devices Queue handle
-static QueueHandle_t s_team_info_queue = NULL;          // Team info Queue handle
-static QueueHandle_t s_limit_switch_queue = NULL;       // Limit switch Queue handle
+static QueueHandle_t s_beacon_queue = NULL;                 // Beacon devices Queue handle
+static QueueHandle_t s_team_info_queue = NULL;              // Team info Queue handle
+static QueueHandle_t s_optical_switch_queue = NULL;         // Optical switch Queue handle
+
+static EventGroupHandle_t s_sys_init_event_group = NULL;    // System init EventGroup handle
 
 static esp_timer_handle_t s_beacon_timer[MAX_BEACONS] = {0};
 
@@ -265,7 +255,7 @@ static uint8_t raw_adv_data[20] = {
 };
 
 
-static stepper_freq_t stepper_freq[6] = {
+static stepper_freq_t stepper_freq[MAX_CAPTURE_SPEED] = {
     STEPPER_FREQ_00HZ,
     STEPPER_FREQ_20HZ,
     STEPPER_FREQ_30HZ,
@@ -281,16 +271,16 @@ static stepper_freq_t stepper_freq[6] = {
 /*!
  * @brief This interrupt service routine is used to .
  * 
- * @param[in] arg  :Not used.
+ * @param[in] arg  :Optical switch GPIO number.
  * 
  * @return Nothing.
  */
-static void limit_switch_isr(void *arg)
+static void optical_switch_isr(void *arg)
 {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;  // Higher priority task flag
-    uint32_t limit_switch_num = (uint32_t) arg;
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;      // Higher priority task flag
+    gpio_num_t optical_switch_num = (gpio_num_t) arg;
 
-    xQueueSendFromISR(s_limit_switch_queue, &limit_switch_num, &xHigherPriorityTaskWoken);
+    xQueueSendFromISR(s_optical_switch_queue, &optical_switch_num, &xHigherPriorityTaskWoken);
 
     /* Wake up higher priority task immediately */
     if (xHigherPriorityTaskWoken) {
@@ -305,7 +295,7 @@ static void limit_switch_isr(void *arg)
 /*!
  * @brief This private function is used as a callback for timer alarms. 
  *
- * @param[in] arg  :Not used.
+ * @param[in] arg  :Structure instance of beacon_dev_t.
  * 
  * @return Nothing.
  */
@@ -385,7 +375,7 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
                 printf("Adv start failed: %s\n\n", esp_err_to_name(err));
             }
             else {
-                printf("start adv successfully\n\n");
+                printf("Start adv successfully\n\n");
             }
             break;
         case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
@@ -453,7 +443,7 @@ void stepper_init(void)
 /*!
  * @brief This public function is used to .
  *
- * @param[in,out] team_dest  :Structure instance of team_info_t
+ * @param[in,out] team_dest  :Structure instance of team_info_t.
  * @param[in] team_source    :Structure instance of team_info_t.
  *
  * @return Nothing.
@@ -519,6 +509,9 @@ static void beacon_parser_task(void *arg)
     /* Create beacon devices queue */
     s_beacon_queue = xQueueCreate(BEACON_QUEUE_LEN, sizeof(beacon_dev_t));
     
+    /* Wait until system init is done */
+    xEventGroupWaitBits(s_sys_init_event_group, SYS_INIT_EVENT_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
+    
     while (1) {
         /* Dequeue beacon device */
         xQueueReceive(s_beacon_queue, &beacon_temp, portMAX_DELAY);
@@ -533,7 +526,7 @@ static void beacon_parser_task(void *arg)
             if (0 == memcmp(beacon_addr_list[beacon_index], beacon_temp.address, ESP_BD_ADDR_LEN)) {
                 /* Check if beacon still advertising */
                 if (BEACON_ABSENT == beacon_temp.proximity) {
-                    printf("**************************\n");
+                    printf("**************************\n\n");
                     printf("Beacon[%d] absent\n\n", beacon_index);
                     beacon[beacon_index].proximity = BEACON_ABSENT;
                     /* Reset RSSI value and counter */
@@ -563,7 +556,7 @@ static void beacon_parser_task(void *arg)
                              * Make sure beacon is not already in range so this    
                              * is run only on a proximity status change */
                             if (BEACON_IN_RANGE != beacon[beacon_index].proximity) {
-                                printf("**************************\n");
+                                printf("**************************\n\n");
                                 printf("beacon[%d] in range\n\n", beacon_index);
                                 beacon[beacon_index].proximity = BEACON_IN_RANGE;
                                 /* Enqueue team info */
@@ -577,7 +570,7 @@ static void beacon_parser_task(void *arg)
                              * Make sure beacon is not already out of range so this    
                              * is run only on a proximity status change */
                             if (BEACON_OUT_RANGE != beacon[beacon_index].proximity) {
-                                printf("**************************\n");
+                                printf("**************************\n\n");
                                 printf("beacon[%d] out of range\n\n", beacon_index);
                                 beacon[beacon_index].proximity = BEACON_OUT_RANGE;
                                 /* Enqueue team info */
@@ -615,18 +608,33 @@ static void cp_ctrl_task(void *arg)
     team_info_t team_temp = {0};
     flag_position_t flag_pos = POSITION_START;
     char lora_packet[LORA_PACKET_LEN] = {0};
+    
+    /* Create Team info queue */
+    s_team_info_queue = xQueueCreate(TEAM_INFO_QUEUE_LEN, sizeof(team_info_t));
 
+    /* Init LoRa module */
     lora_init();
     lora_set_frequency(915e6);
     lora_enable_crc();
+
+    /* Flag position should be at starting position */
+    if (LOW != gpio_get_level(PIN_OPTICAL_SWITCH_2)){
+        /* Start flag rotation */
+        gpio_set_level(PIN_MOTOR_DIR, MOTOR_DIR_CW);
+        mcpwm_set_frequency(MCPWM_UNIT_0, MCPWM_TIMER_0, stepper_freq[MAX_CAPTURE_SPEED-1]);
+        mcpwm_start(MCPWM_UNIT_0, MCPWM_TIMER_0);
+
+        /* Wait until flag reaches starting position */
+        while (TEAM_NONE != team_temp.id) {
+            xQueueReceive(s_team_info_queue, &team_temp, portMAX_DELAY);
+        }
+
+        /* Stop flag rotation */
+        mcpwm_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);
+    }
     
-    stepper_init();
-
-    /* Put flag to starting position (Quick rotation) */
-    // TODO
-
-    /* Create Team info queue */
-    s_team_info_queue = xQueueCreate(TEAM_INFO_QUEUE_LEN, sizeof(team_info_t));
+    /* Set SYS_INIT_EVENT_BIT */
+    xEventGroupSetBits(s_sys_init_event_group, SYS_INIT_EVENT_BIT);
 
     while (1) {
         /* Wait for new Team info then dequeue */
@@ -635,94 +643,100 @@ static void cp_ctrl_task(void *arg)
         /* Update Team info */
         team_info_update(team, team_temp);
         
-        /* Store Team ids */
+        /* Store Team IDs */
         current_team_id = team_temp.id;
         opposing_team_id = !team_temp.id;
 
-        if (true == team_temp.b_cp_captured && 0 == team[opposing_team_id].units_counter) {
-            /* The current team has captured the CP (Save CP capture status) */
-            team[current_team_id].b_cp_captured = team_temp.b_cp_captured;
-            team[opposing_team_id].b_cp_captured = !team_temp.b_cp_captured;
-            
-            /* Save new flag position */
-            flag_pos = (current_team_id == TEAM_A ? POSITION_A : POSITION_B);
-
-            sprintf(lora_packet, "cp_id:%d, cp_status:%d, dominant_team:%d", CP_A, CP_CAPTURED, current_team_id);
-            lora_send_packet((uint8_t *)lora_packet, sizeof(lora_packet));
-        }
-        else {
-            /* Before raising current team flag, make sure :
-             *  - There are still current team units in range 
-             *  - There are no opposing team units in range
-             *  - The flag position is not already on current team flag_pos
-             * */
-            if (0 < team[current_team_id].units_counter &&
-                0 == team[opposing_team_id].units_counter &&
-                (flag_position_t)current_team_id != flag_pos) {
+        /* Process only TEAM_A and TEAM_B */
+        if (TEAM_NONE != team_temp.id) {
+            /* The current team has captured the CP */
+            if (true == team_temp.b_cp_captured && 0 == team[opposing_team_id].units_counter) {
+                /* Save CP capture status */
+                team[current_team_id].b_cp_captured = team_temp.b_cp_captured;
+                team[opposing_team_id].b_cp_captured = !team_temp.b_cp_captured;
                 
-                /* Raise flag */
-                gpio_set_level(PIN_MOTOR_DIR,
-                              (current_team_id == TEAM_A ? MOTOR_DIR_CW : MOTOR_DIR_CCW));
-                mcpwm_set_frequency(MCPWM_UNIT_0, MCPWM_TIMER_0,
-                                    stepper_freq[team[current_team_id].capture_speed]);
-                mcpwm_start(MCPWM_UNIT_0, MCPWM_TIMER_0);
+                /* Save new flag position */
+                flag_pos = (current_team_id == TEAM_A ? POSITION_A : POSITION_B);
 
-                /* The opposing team is loosing the CP (Save CP new capture status) */
-                team[opposing_team_id].b_cp_captured = false;
-
-                /* Save new flag position (in motion so NONE)*/
-                flag_pos = POSITION_NONE;
-
-                sprintf(lora_packet, "cp_id:%d, cp_status:%d, dominant_team:%d", CP_A, CP_CAPTURING, current_team_id);
+                /* Notify players of CP capture status via LoRa comms */
+                sprintf(lora_packet, "cp_id:%d, cp_status:%d, dominant_team:%d", CP_ID, CP_CAPTURED, current_team_id);
                 lora_send_packet((uint8_t *)lora_packet, sizeof(lora_packet));
             }
             else {
-                /* Resume opposing team flag rotation if :
-                 *  - There are still opposing team units in range  
-                 *  - There are no current team units in range
-                 *  - The flag position is not already on opposing team flag_pos 
-                 * */
-                if (0 < team[opposing_team_id].units_counter &&
-                    0 == team[current_team_id].units_counter &&
-                    (flag_position_t)opposing_team_id != flag_pos) {
-
+                /* Before raising current team flag, make sure :
+                *  - There are still current team units in range 
+                *  - There are no opposing team units in range
+                *  - The flag position is not already on current team flag_pos
+                * */
+                if (0 < team[current_team_id].units_counter &&
+                    0 == team[opposing_team_id].units_counter &&
+                    (flag_position_t)current_team_id != flag_pos) {
+                    
                     /* Raise flag */
                     gpio_set_level(PIN_MOTOR_DIR,
-                                  (opposing_team_id == TEAM_B ? MOTOR_DIR_CCW : MOTOR_DIR_CW));
+                                (current_team_id == TEAM_A ? MOTOR_DIR_CW : MOTOR_DIR_CCW));
                     mcpwm_set_frequency(MCPWM_UNIT_0, MCPWM_TIMER_0,
-                                        stepper_freq[team[opposing_team_id].capture_speed]);
+                                        stepper_freq[team[current_team_id].capture_speed]);
                     mcpwm_start(MCPWM_UNIT_0, MCPWM_TIMER_0);
 
-                    /* The current team is loosing the CP (Save CP new capture status) */
-                    team[current_team_id].b_cp_captured = false;
+                    /* The opposing team is loosing the CP (Save CP new capture status) */
+                    team[opposing_team_id].b_cp_captured = false;
 
                     /* Save new flag position (in motion so NONE)*/
                     flag_pos = POSITION_NONE;
 
-                    sprintf(lora_packet, "cp_id:%d, cp_status:%d, dominant_team:%d", CP_A, CP_CAPTURING, opposing_team_id);
+                    /* Send LoRa packet to players */
+                    sprintf(lora_packet, "cp_id:%d, cp_status:%d, dominant_team:%d", CP_ID, CP_CAPTURING, current_team_id);
                     lora_send_packet((uint8_t *)lora_packet, sizeof(lora_packet));
                 }
                 else {
-                    /* Stop flag rotation (Both team units are near the CP) */
-                    mcpwm_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);
+                    /* Resume opposing team flag rotation if :
+                    *  - There are still opposing team units in range  
+                    *  - There are no current team units in range
+                    *  - The flag position is not already on opposing team flag_pos 
+                    * */
+                    if (0 < team[opposing_team_id].units_counter &&
+                        0 == team[current_team_id].units_counter &&
+                        (flag_position_t)opposing_team_id != flag_pos) {
+
+                        /* Raise flag */
+                        gpio_set_level(PIN_MOTOR_DIR,
+                                    (opposing_team_id == TEAM_B ? MOTOR_DIR_CCW : MOTOR_DIR_CW));
+                        mcpwm_set_frequency(MCPWM_UNIT_0, MCPWM_TIMER_0,
+                                            stepper_freq[team[opposing_team_id].capture_speed]);
+                        mcpwm_start(MCPWM_UNIT_0, MCPWM_TIMER_0);
+
+                        /* The current team is loosing the CP (Save CP new capture status) */
+                        team[current_team_id].b_cp_captured = false;
+
+                        /* Save new flag position (in motion so NONE)*/
+                        flag_pos = POSITION_NONE;
+
+                        /* Send LoRa packet to players */
+                        sprintf(lora_packet, "cp_id:%d, cp_status:%d, dominant_team:%d", CP_ID, CP_CAPTURING, opposing_team_id);
+                        lora_send_packet((uint8_t *)lora_packet, sizeof(lora_packet));
+                    }
+                    else {
+                        /* Stop flag rotation (Both team units are near the CP) */
+                        mcpwm_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);
+                    }
                 }
             }
+
+
+            /* Debug */
+            printf("TEAM-A Current info:\n");
+            printf("  Units counter = %d\n", team[TEAM_A].units_counter);
+            printf("  Capture speed = %d\n", team[TEAM_A].capture_speed);
+            printf("  CP captured ? = %s\n\n", team[TEAM_A].b_cp_captured == true ? "YES" : "NO");
+            printf("TEAM-B Current info:\n");
+            printf("  Units counter = %d\n", team[TEAM_B].units_counter);
+            printf("  Capture speed = %d\n", team[TEAM_B].capture_speed);
+            printf("  CP captured ? = %s\n\n", team[TEAM_B].b_cp_captured == true ? "YES" : "NO");
+            printf("**************************\n\n");
         }
-
-
-        /* Debug */
-        printf("TEAM-A Current info:\n");
-        printf("  Units counter = %d\n", team[TEAM_A].units_counter);
-        printf("  Capture speed = %d\n", team[TEAM_A].capture_speed);
-        printf("  CP captured ? = %s\n\n", team[TEAM_A].b_cp_captured == true ? "YES" : "NO");
-        printf("TEAM-B Current info:\n");
-        printf("  Units counter = %d\n", team[TEAM_B].units_counter);
-        printf("  Capture speed = %d\n", team[TEAM_B].capture_speed);
-        printf("  CP captured ? = %s\n\n", team[TEAM_B].b_cp_captured == true ? "YES" : "NO");
-        printf("**************************\n\n");
     }
 }
-
 
 
 /*!
@@ -732,57 +746,90 @@ static void cp_ctrl_task(void *arg)
  * 
  * @return Nothing.
  */
-static void limit_switch_task(void *arg)
+static void optical_switch_task(void *arg)
 {
-    uint32_t limit_switch_num = 0;
+    gpio_num_t optical_switch_num;
     team_info_t team = {0};
     
-    /* Create queue for limit switches events */
-    s_limit_switch_queue = xQueueCreate(1, sizeof(uint32_t));
+    /* Create queue for optical switches events */
+    s_optical_switch_queue = xQueueCreate(1, sizeof(gpio_num_t));
 
-    /* Set inpout mode for limit switch Pins */
-    gpio_set_direction(PIN_LIMIT_SWITCH_1, GPIO_MODE_INPUT);
-    gpio_set_direction(PIN_LIMIT_SWITCH_2, GPIO_MODE_INPUT);
-    gpio_set_direction(PIN_LIMIT_SWITCH_3, GPIO_MODE_INPUT);
+    /* Set input mode for optical switch Pins */
+    gpio_set_direction(PIN_OPTICAL_SWITCH_1, GPIO_MODE_INPUT);
+    gpio_set_direction(PIN_OPTICAL_SWITCH_2, GPIO_MODE_INPUT);
+    gpio_set_direction(PIN_OPTICAL_SWITCH_3, GPIO_MODE_INPUT);
     
-    /* Set rising edge interrupt type for limit switch Pins */
-    gpio_set_intr_type(PIN_LIMIT_SWITCH_1, GPIO_INTR_POSEDGE);
-    gpio_set_intr_type(PIN_LIMIT_SWITCH_2, GPIO_INTR_POSEDGE);
-    gpio_set_intr_type(PIN_LIMIT_SWITCH_3, GPIO_INTR_POSEDGE);
+    /* Set falling edge interrupt type for optical switch Pins */
+    gpio_set_intr_type(PIN_OPTICAL_SWITCH_1, GPIO_INTR_NEGEDGE);
+    gpio_set_intr_type(PIN_OPTICAL_SWITCH_2, GPIO_INTR_NEGEDGE);
+    gpio_set_intr_type(PIN_OPTICAL_SWITCH_3, GPIO_INTR_NEGEDGE);
 
-    /* Setup ISR for limit switch Pins */
+    /* Setup ISR for optical switch Pins */
     gpio_install_isr_service(ESP_INTR_FLAG_LEVEL3);
-    gpio_isr_handler_add(PIN_LIMIT_SWITCH_1, limit_switch_isr, (void*) PIN_LIMIT_SWITCH_1);
-    gpio_isr_handler_add(PIN_LIMIT_SWITCH_2, limit_switch_isr, (void*) PIN_LIMIT_SWITCH_2);
-    gpio_isr_handler_add(PIN_LIMIT_SWITCH_3, limit_switch_isr, (void*) PIN_LIMIT_SWITCH_3);
+    gpio_isr_handler_add(PIN_OPTICAL_SWITCH_1, optical_switch_isr, (void*) PIN_OPTICAL_SWITCH_1);
+    gpio_isr_handler_add(PIN_OPTICAL_SWITCH_2, optical_switch_isr, (void*) PIN_OPTICAL_SWITCH_2);
+    gpio_isr_handler_add(PIN_OPTICAL_SWITCH_3, optical_switch_isr, (void*) PIN_OPTICAL_SWITCH_3);
 
     while (1) {
-        /* Wait until a limit switch is reached */
-        xQueueReceive(s_limit_switch_queue, &limit_switch_num, portMAX_DELAY);
-        
-        /* Stop flag rotation */
-        mcpwm_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);
+        /* Wait until a optical switch is reached */
+        xQueueReceive(s_optical_switch_queue, &optical_switch_num, portMAX_DELAY);
 
-        switch (limit_switch_num) {
-            case PIN_LIMIT_SWITCH_1:
-                team.id = TEAM_A;
-                printf("Limit switch TEAM-A\n\n");
+        /* Disable interrupt of current optical switch Pin */
+        gpio_intr_disable(optical_switch_num);
+
+        /* Parse optical switch num */
+        switch (optical_switch_num) {
+            case PIN_OPTICAL_SWITCH_1:
+                /* Flag reached TEAM_A position */
+                mcpwm_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);    // Stop flag rotation
+                team.id = TEAM_A;           // Save Team ID
+                team.b_cp_captured = true;  // Save capture state
+                printf("Optical switch : TEAM-A\n\n");
                 break;
-            case PIN_LIMIT_SWITCH_2:
-                team.id = TEAM_NONE;
-                printf("Limit switch START\n\n");
+            case PIN_OPTICAL_SWITCH_2:
+                /* Flag reached starting position */
+                team.id = TEAM_NONE;        // Dummy save
+                team.b_cp_captured = false; // Dummy save
+                printf("Optical switch : START\n\n");
                 break;
-            case PIN_LIMIT_SWITCH_3:
-                team.id = TEAM_B;
-                printf("Limit switch TEAM-B\n\n");
+            case PIN_OPTICAL_SWITCH_3:
+                /* Flag reached TEAM_B position */
+                mcpwm_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);    // Stop flag rotation
+                team.id = TEAM_B;           // Save Team ID
+                team.b_cp_captured = true;  // Save capture state
+                printf("Optical switch : TEAM-B\n\n");
                 break;
             default:
                 break;
         }
         
-        team.b_cp_captured = true;
-
+        /* Send info to cp_ctrl_task */
         xQueueSend(s_team_info_queue, &team, 0);
+
+        /****************** Debounce optical switch ******************/
+
+        delay_ms(200);  // Small delay to avoid the noise in the signal
+
+        /* Enable interrupt of current optical switch Pin */
+        gpio_intr_enable(optical_switch_num);
+        
+        if (LOW == gpio_get_level(optical_switch_num)){
+            /* Set rising edge interrupt type for current optical switch */
+            gpio_set_intr_type(optical_switch_num, GPIO_INTR_POSEDGE);
+
+            /* Wait until a optical switch is clear */
+            xQueueReceive(s_optical_switch_queue, &optical_switch_num, portMAX_DELAY);
+
+            delay_ms(200);  // Small delay to avoid the noise in the signal
+        
+            /* Set falling edge interrupt type for current optical switch */
+            gpio_set_intr_type(optical_switch_num, GPIO_INTR_NEGEDGE);
+        }
+
+        /* Empty queue from dummy ISR reading caused by optical switch bouncing */
+        if (0 < uxQueueMessagesWaiting(s_optical_switch_queue)) {
+            xQueueReceive(s_optical_switch_queue, &optical_switch_num, 0);
+        }
     }
 }
 
@@ -799,18 +846,17 @@ static void limit_switch_task(void *arg)
  */
 void app_main(void)
 {
+    esp_err_t esp_status = ESP_OK;
+
     printf("\n\nXstractiK Domination Project  -  CP-v%s\n\n", FIRMWARE_VERSION);
+    
+    /* Create EventGroup for system Init */
+    s_sys_init_event_group = xEventGroupCreate();
 
-    /* Create a task for limit switches */
-    xTaskCreatePinnedToCore(&limit_switch_task,
-                            "Limit Switch Task",
-                            LIMIT_SWITCH_TASK_STACK,
-                            NULL,
-                            LIMIT_SWITCH_TASK_PRIORITY,
-                            NULL,
-                            LIMIT_SWITCH_TASK_CORE);
+    /* Init stepper motor */
+    stepper_init();
 
-    /* Create a task for flag control */
+    /* Create a task for CP control */
     xTaskCreatePinnedToCore(&cp_ctrl_task,
                             "CP ctrl task",
                             CP_CTRL_TASK_STACK,
@@ -819,18 +865,16 @@ void app_main(void)
                             NULL,
                             CP_CTRL_TASK_CORE);
 
-    ESP_ERROR_CHECK(nvs_flash_init());
-
-    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
-
-    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-    esp_bt_controller_init(&bt_cfg);
-    esp_bt_controller_enable(ESP_BT_MODE_BLE);
+    /* Create a task for optical switches */
+    xTaskCreatePinnedToCore(&optical_switch_task,
+                            "Optical Switch Task",
+                            OPTICAL_SWITCH_TASK_STACK,
+                            NULL,
+                            OPTICAL_SWITCH_TASK_PRIORITY,
+                            NULL,
+                            OPTICAL_SWITCH_TASK_CORE);
     
-    esp_bluedroid_init();
-    esp_bluedroid_enable();
-    
-    /* Create a task for.. */
+    /* Create a task to parse beacons */
     xTaskCreatePinnedToCore(&beacon_parser_task,
                             "Beacon parser task",
                             BEACON_PARSER_TASK_STACK,
@@ -838,18 +882,31 @@ void app_main(void)
                             BEACON_PARSER_TASK_PRIORITY,
                             NULL,
                             BEACON_PARSER_TASK_CORE);
-    
-    esp_err_t status;
 
-    //register the scan callback function to the gap module
-    status = esp_ble_gap_register_callback(esp_gap_cb);
-    if (status != ESP_OK) {
-        printf("\ngap register error: %s\n", esp_err_to_name(status));
+    /* Init NVS */
+    ESP_ERROR_CHECK(nvs_flash_init());
+
+    /* Free unused BT Classic memory */
+    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+
+    /* BT controller configuration */
+    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    esp_bt_controller_init(&bt_cfg);            //Initialize BT controller
+    esp_bt_controller_enable(ESP_BT_MODE_BLE);  // Enable BT controller
+    
+    esp_bluedroid_init();   // Init and alloc the resource for bluetooth
+    esp_bluedroid_enable(); // Enable bluetooth
+
+    /* Register the scan callback function to the gap module */
+    esp_status = esp_ble_gap_register_callback(esp_gap_cb);
+    if (esp_status != ESP_OK) {
+        printf("Gap register error: %s\n\n", esp_err_to_name(esp_status));
     }
     
-    status = esp_ble_gap_config_adv_data_raw(raw_adv_data, sizeof(raw_adv_data));
-    if (status != ESP_OK){
-        printf("\nConfig adv data failed: %s\n", esp_err_to_name(status));
+    /* Set advertising data */
+    esp_status = esp_ble_gap_config_adv_data_raw(raw_adv_data, sizeof(raw_adv_data));
+    if (esp_status != ESP_OK){
+        printf("Config adv data failed: %s\n\n", esp_err_to_name(esp_status));
     }
     
     /* set scan parameters */

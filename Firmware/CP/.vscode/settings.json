@@ -41,7 +41,7 @@
     "task.h": "c",
     "sstream": "c"
   },
-  "idf.portWin": "COM6",
+  "idf.portWin": "COM13",
   "idf.flashType": "UART",
   "idf.adapterTargetName": "esp32"
 }
