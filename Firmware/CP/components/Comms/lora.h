@@ -2,6 +2,9 @@
 #define LORA_H  
 
 
+
+/***************************** Function Prototype Declarations *****************************/
+
 void lora_reset(void);
 void lora_explicit_header_mode(void);
 void lora_implicit_header_mode(int size);

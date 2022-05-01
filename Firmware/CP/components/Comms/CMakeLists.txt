@@ -1,4 +1,4 @@
 idf_component_register(
-    SRCS "lora.c"
+    SRCS "ble.c" "lora.c"
     INCLUDE_DIRS "."
-    REQUIRES driver esp32)
+    REQUIRES bt driver esp32)

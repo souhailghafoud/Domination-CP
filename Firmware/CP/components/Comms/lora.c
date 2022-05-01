@@ -7,9 +7,9 @@
 #include <string.h>
 
 /* RFM96 pins */
-#define PIN_RFM96_SPI_CS         GPIO_NUM_5
-#define PIN_RFM96_RST            GPIO_NUM_14
-#define PIN_RFM96_DIO_0          GPIO_NUM_27
+#define PIN_RFM96_SPI_CS            GPIO_NUM_5
+#define PIN_RFM96_RST               GPIO_NUM_14
+#define PIN_RFM96_DIO_0             GPIO_NUM_27
 
 /* SPI pins */
 #define PIN_SPI_MOSI                GPIO_NUM_23
